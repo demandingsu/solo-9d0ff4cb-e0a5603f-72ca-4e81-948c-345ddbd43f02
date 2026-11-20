@@ -19,8 +19,9 @@
       {% if state.error %}<div class="flash err">{{ state.error }}</div>{% endif %}
 
       <section class="card">
-        <h2>画幅尺寸</h2>
+        <h2>画幅尺寸 {% if lock %}<span class="badge warn">锁区生效，尺寸不可改</span>{% endif %}</h2>
         <form method="post" action="/canvas">
+          <fieldset {% if lock %}disabled{% endif %}>
           <div class="grid2">
             <label class="field"><span>宽度 (px)</span>
               <input type="number" name="width" min="1" max="20000" required value="{{ state.width }}">
@@ -33,7 +34,83 @@
             <button type="submit" class="primary">更新画幅并重算</button>
             <span class="small muted">画幅上限 20000×20000，总量 ≤ 1600 万像素（来源 CSV 按像素输出）。</span>
           </div>
+          </fieldset>
         </form>
+      </section>
+
+      <section class="card">
+        <h2>补片锁区 <span class="hint">锁定一版已发布画幅中的矩形，保住验收后的画面与来源</span></h2>
+        {% if lock %}
+          <div class="stats" style="margin-top:0">
+            <span>锁定版本 <b>#{{ lock.seq }}</b></span>
+            <span>矩形 x <b class="mono">[{{ lock.x0 }}, {{ lock.x1 }})</b> · y <b class="mono">[{{ lock.y0 }}, {{ lock.y1 }})</b></span>
+            <span>尺寸 <b>{{ lock.width }}×{{ lock.height }}</b></span>
+            {% if lock_matches_canvas %}
+              <span class="badge good">与当前画幅一致</span>
+            {% else %}
+              <span class="badge bad">与当前画幅不一致</span>
+            {% endif %}
+            {% if not lock_files_ok %}
+              <span class="badge bad">锁定版文件不可用，生成会中止</span>
+            {% endif %}
+          </div>
+          <p class="small muted" style="margin:10px 0">
+            锁区内预览与发布沿用该版本的像元和来源（含透明像元及其空来源），区外按当前瓦片合成。
+            一次只锁一块；可换锁区（重新提交下方表单）或解锁。
+          </p>
+          <form method="post" action="/unlock">
+            <button type="submit" class="danger">解锁</button>
+          </form>
+        {% else %}
+          <p class="small muted" style="margin:0 0 10px">
+            在草稿页选一版<b>同尺寸</b>的已发布画幅，填画幅内的整数矩形锁定（右、下边界不含）。
+            锁定时画幅尺寸不可修改；锁区内将沿用所选版本的像元与来源。
+          </p>
+          {% if lock_corrupt %}
+          <div class="flash err" style="margin-bottom:10px">
+            已保存的锁区记录无法读取，生成已暂停；可清除后重新锁定。
+          </div>
+          <form method="post" action="/unlock" style="margin-bottom:10px">
+            <button type="submit" class="danger">清除无法读取的锁区记录</button>
+          </form>
+          {% endif %}
+        {% endif %}
+
+        {% if published_versions %}
+        <form method="post" action="/lock">
+          <label class="field"><span>已发布画幅版本（须与当前画幅同尺寸）</span>
+            <select name="version_id" required>
+              {% for v in published_versions %}
+                {% set same_size = v.width == state.width and v.height == state.height %}
+                <option value="{{ v.id }}" {% if not same_size %}disabled{% endif %}
+                        {% if lock and lock.version_id == v.id %}selected{% endif %}>
+                  #{{ v.seq }} · {{ v.width }}×{{ v.height }} · {{ v.created_at }}{{ "" if same_size else "（尺寸不符，不能锁定）" }}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="grid2">
+            <label class="field"><span>左边界 x0（含）</span>
+              <input type="number" name="x0" step="1" min="0" required value="{{ lock.x0 if lock else 0 }}">
+            </label>
+            <label class="field"><span>上边界 y0（含）</span>
+              <input type="number" name="y0" step="1" min="0" required value="{{ lock.y0 if lock else 0 }}">
+            </label>
+            <label class="field"><span>右边界 x1（不含）</span>
+              <input type="number" name="x1" step="1" min="1" required value="{{ lock.x1 if lock else state.width }}">
+            </label>
+            <label class="field"><span>下边界 y1（不含）</span>
+              <input type="number" name="y1" step="1" min="1" required value="{{ lock.y1 if lock else state.height }}">
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit" class="primary">{{ "换锁区" if lock else "锁定该矩形" }}</button>
+            <span class="small muted">右、下边界不含；矩形须落在 0 ≤ x0 &lt; x1 ≤ {{ state.width }}、0 ≤ y0 &lt; y1 ≤ {{ state.height }}。</span>
+          </div>
+        </form>
+        {% else %}
+          <p class="muted small">还没有可锁定的已发布画幅；请先发布一版。</p>
+        {% endif %}
       </section>
 
       <section class="card">
@@ -165,7 +242,8 @@
         </div>
         <p class="small muted" style="margin:10px 0 0">
           发布会把当前冻结输入渲染成 PNG + 来源 CSV，二者来自同一份输入快照。
-          发布期间继续上传或撤回不会影响本次结果；生成失败也不会产生半成品版本。
+          {% if lock %}锁区也会一并冻结：锁区内沿用版本 #{{ lock.seq }} 的像元与来源。{% endif %}
+          发布期间继续上传、撤回或换锁区不会影响本次结果；生成失败也不会产生半成品版本。
         </p>
       </section>
 

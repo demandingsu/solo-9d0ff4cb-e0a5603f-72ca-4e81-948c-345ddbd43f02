@@ -56,7 +56,10 @@ CREATE TABLE IF NOT EXISTS published_versions (
     png_sha256          TEXT NOT NULL,
     csv_sha256          TEXT NOT NULL,
     png_bytes           INTEGER NOT NULL,
-    csv_bytes           INTEGER NOT NULL
+    csv_bytes           INTEGER NOT NULL,
+    -- Empty when the version was published without a lock; otherwise the
+    -- serialised RegionLock that was frozen into this version.
+    lock_json           TEXT    NOT NULL DEFAULT ''
 );
 """
 
@@ -69,6 +72,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "draft_covered": "0",
     "draft_transparent": "262144",
     "published_version_id": "",
+    # Serialised RegionLock (empty = unlocked).  At most one lock at a time.
+    "lock_json": "",
 }
 
 
@@ -88,6 +93,16 @@ def init_db(db_path: Path | str) -> None:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = FULL")
         conn.executescript(SCHEMA)
+        # Lightweight migration for databases created before lock support.
+        existing = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(published_versions)").fetchall()
+        }
+        if "lock_json" not in existing:
+            conn.execute(
+                "ALTER TABLE published_versions "
+                "ADD COLUMN lock_json TEXT NOT NULL DEFAULT ''"
+            )
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
